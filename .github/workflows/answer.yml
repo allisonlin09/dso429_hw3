@@ -29,11 +29,17 @@ jobs:
 
       - name: Check the Gemini key (test only)
         if: contains(github.event.head_commit.message, '[test-gemini]')
+        continue-on-error: true  # a failed test must never block answering
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           curl -sSfL -o /tmp/practice_keys.csv https://raw.githubusercontent.com/FaisalXL/dso429-hourly-quiz/main/practice_keys.csv
-          python answer.py --test-llm /tmp/practice_keys.csv
+          set +e
+          python answer.py --test-llm /tmp/practice_keys.csv > /tmp/gemini_test.txt 2>&1
+          status=$?
+          # Annotations are visible without signing in to GitHub.
+          while IFS= read -r line; do echo "::notice title=gemini test::$line"; done < /tmp/gemini_test.txt
+          exit $status
 
       - name: Answer new rounds
         id: answer

@@ -41,6 +41,7 @@ def ask(question, options):
     """Return 'A'-'D' from Gemini, or None if unavailable."""
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
+        print("gemini: GEMINI_API_KEY is not set")
         return None
     prompt = PROMPT.format(q=question, a=options[0], b=options[1], c=options[2], d=options[3])
     for model in MODELS:
@@ -52,7 +53,8 @@ def ask(question, options):
                     return m[-1]
                 break  # answered but unparseable: try the next model
             except urllib.error.HTTPError as e:
-                print(f"gemini {model}: HTTP {e.code}")
+                detail = e.read().decode("utf-8", "replace")[:300].replace("\n", " ")
+                print(f"gemini {model}: HTTP {e.code} {detail}")
                 if e.code in (429, 500, 502, 503, 504):
                     time.sleep(10 * (attempt + 1))
                     continue
