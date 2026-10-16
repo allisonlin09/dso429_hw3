@@ -6,6 +6,8 @@ on:
     # every 15 minutes keeps us well inside the 3-hour full-credit window.
     - cron: "5,20,35,50 * * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: write
