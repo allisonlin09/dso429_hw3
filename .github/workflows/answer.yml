@@ -27,8 +27,18 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check the Gemini key (test only)
+        if: contains(github.event.head_commit.message, '[test-gemini]')
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          curl -sSfL -o /tmp/practice_keys.csv https://raw.githubusercontent.com/FaisalXL/dso429-hourly-quiz/main/practice_keys.csv
+          python answer.py --test-llm /tmp/practice_keys.csv
+
       - name: Answer new rounds
         id: answer
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set +e
           python answer.py
@@ -38,7 +48,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898733+github-actions[bot]@users.noreply.github.com"
-          git add answers unsolved.log 2>/dev/null || git add answers
+          git add answers; for f in unsolved.log llm_answers.json; do [ -f "$f" ] && git add "$f"; done || true
           if git diff --cached --quiet; then
             echo "No new rounds."
           else
@@ -58,7 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue create --title "${TITLE_PREFIX}Unsolved quiz question(s) - fix within 3 hours of release" --body-file alert.md
+          gh issue create --title "${TITLE_PREFIX}New question type found - see status inside" --body-file alert.md
 
       - name: Fail if any question was unsolved
         if: steps.answer.outputs.status != '0'
