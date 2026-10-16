@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: answer
@@ -45,6 +46,19 @@ jobs:
             git pull --rebase
             git push
           fi
+
+      - name: Write a sample alert (test only)
+        if: contains(github.event.head_commit.message, '[test-alert]')
+        run: |
+          python -c "import answer; answer.write_alert([{'round_id':'49','q_index':'7','released_at':'2026-10-17T21:00:00Z','question_text':'TEST ALERT - sample question the solver cannot answer','option_a':'1','option_b':'2','option_c':'3','option_d':'4'}])"
+          echo "TITLE_PREFIX=[TEST] " >> "$GITHUB_ENV"
+
+      - name: Open a GitHub issue (phone notification)
+        if: always() && hashFiles('alert.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --title "${TITLE_PREFIX}Unsolved quiz question(s) - fix within 3 hours of release" --body-file alert.md
 
       - name: Fail if any question was unsolved
         if: steps.answer.outputs.status != '0'

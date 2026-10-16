@@ -15,6 +15,7 @@ import json
 import sys
 import urllib.request
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from solver import solve
@@ -22,6 +23,7 @@ from solver import solve
 QUESTIONS_URL = "https://raw.githubusercontent.com/FaisalXL/dso429-hourly-quiz/main/questions.csv"
 ANSWERS = Path(__file__).parent / "answers"
 UNSOLVED_LOG = Path(__file__).parent / "unsolved.log"
+ALERT = Path(__file__).parent / "alert.md"
 
 
 def load_rows(src):
@@ -89,8 +91,40 @@ def main():
             for r in all_unsolved:
                 f.write(f"round {r['round_id']} q{r['q_index']}: {r['question_text']} | "
                         f"{r['option_a']} | {r['option_b']} | {r['option_c']} | {r['option_d']}\n")
+        write_alert(all_unsolved)
         print(f"{len(all_unsolved)} question(s) unsolved; see unsolved.log")
         sys.exit(2)
+
+
+def write_alert(unsolved):
+    """Write alert.md, the body of the GitHub issue the workflow opens."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz, tzname = ZoneInfo("America/Los_Angeles"), "Pacific"
+    except Exception:
+        tz, tzname = timezone.utc, "UTC"
+    rounds = sorted({int(r["round_id"]) for r in unsolved})
+    lines = [f"@allisonlin09 the solver could not answer {len(unsolved)} question(s). "
+             "Each was submitted as `A` as a placeholder.", ""]
+    for rid in rounds:
+        rel = next(r["released_at"] for r in unsolved if int(r["round_id"]) == rid)
+        deadline = datetime.fromisoformat(rel.replace("Z", "+00:00")) + timedelta(hours=3)
+        lines.append(f"**Round {rid}**: fix and re-push by **{deadline.astimezone(tz):%a %b %d, %I:%M %p} {tzname}** "
+                     "for full credit (submissions lock 3 hours after release).")
+    lines += ["", "| Round | Q | Question | A | B | C | D |", "|---|---|---|---|---|---|---|"]
+    for r in unsolved:
+        cells = [r["round_id"], r["q_index"], r["question_text"],
+                 r["option_a"], r["option_b"], r["option_c"], r["option_d"]]
+        lines.append("| " + " | ".join(str(c).replace("|", "\\|") for c in cells) + " |")
+    files = " ".join(f"answers/round-{rid:04d}.json" for rid in rounds)
+    lines += ["", "### Fix from your phone", "Paste this into Claude Code (claude.ai/code, on this repo):", "",
+              "```",
+              "New question type(s) in the table in this issue aren't handled by solver.py. "
+              "Add a solver for each, confirm `python answer.py --check practice_keys.csv` still scores 1200/1200 "
+              "(download practice_keys.csv from FaisalXL/dso429-hourly-quiz), "
+              f"delete {files}, and push to main so the workflow re-answers them.",
+              "```"]
+    ALERT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
