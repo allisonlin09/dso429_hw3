@@ -4,6 +4,10 @@ Usage:
   python answer.py                 # fetch questions.csv from the quiz repo
   python answer.py questions.csv   # use a local copy
   python answer.py --check KEYS    # score practice rounds against an answer key
+  python answer.py --unsolved      # list released questions the solver can't answer
+
+Rounds still within 3 hours of release are re-answered on every run, so a
+solver fix reaches them automatically.
 
 Exits with code 2 if any question could not be solved, so the GitHub
 Actions run shows as failed (and GitHub emails you) while still pushing
@@ -36,6 +40,28 @@ def load_rows(src):
     for r in csv.DictReader(io.StringIO(text)):
         rounds[int(r["round_id"])].append(r)
     return rounds
+
+
+def released(rows):
+    return datetime.fromisoformat(rows[0]["released_at"].replace("Z", "+00:00"))
+
+
+def still_open(rows):
+    """True while a re-push still replaces the graded version (3 hours after release)."""
+    return datetime.now(timezone.utc) < released(rows) + timedelta(hours=3)
+
+
+def list_unsolved(rounds):
+    """Print every released question the solver can't answer; return how many."""
+    n = 0
+    for rid in sorted(rounds):
+        for r in rounds[rid]:
+            letter, _ = solve(r["question_text"], [r["option_a"], r["option_b"], r["option_c"], r["option_d"]])
+            if letter is None:
+                n += 1
+                print(f"round {rid} q{r['q_index']}: {r['question_text']}")
+    print(f"{n} unsolved")
+    return n
 
 
 def answer_round(rows):
@@ -73,18 +99,24 @@ def main():
     args = sys.argv[1:]
     if args[:1] == ["--check"]:
         sys.exit(0 if check(load_rows(args[2] if len(args) > 2 else None), args[1]) else 1)
+    if args[:1] == ["--unsolved"]:
+        sys.exit(1 if list_unsolved(load_rows(args[1] if len(args) > 1 else None)) else 0)
 
     rounds = load_rows(args[0] if args else None)
     ANSWERS.mkdir(exist_ok=True)
     all_unsolved = []
     for rid in sorted(rounds):
         out = ANSWERS / f"round-{rid:04d}.json"
-        if out.exists():
-            continue
         answers, unsolved = answer_round(rounds[rid])
-        out.write_text(json.dumps({"round_id": rid, "answers": answers}, indent=2) + "\n")
-        print(f"wrote {out.name}" + (f" ({len(unsolved)} unsolved)" if unsolved else ""))
-        all_unsolved += unsolved
+        content = json.dumps({"round_id": rid, "answers": answers}, indent=2) + "\n"
+        if not out.exists():
+            out.write_text(content)
+            print(f"wrote {out.name}" + (f" ({len(unsolved)} unsolved)" if unsolved else ""))
+            all_unsolved += unsolved
+        elif still_open(rounds[rid]) and out.read_text() != content:
+            # The solver changed (e.g. an auto-fix); re-push while the round is still editable.
+            out.write_text(content)
+            print(f"updated {out.name}")
 
     if all_unsolved:
         with UNSOLVED_LOG.open("a", encoding="utf-8") as f:
@@ -116,13 +148,12 @@ def write_alert(unsolved):
         cells = [r["round_id"], r["q_index"], r["question_text"],
                  r["option_a"], r["option_b"], r["option_c"], r["option_d"]]
         lines.append("| " + " | ".join(str(c).replace("|", "\\|") for c in cells) + " |")
-    files = " ".join(f"answers/round-{rid:04d}.json" for rid in rounds)
     lines += ["", "### Fix from your phone", "Paste this into Claude Code (claude.ai/code, on this repo):", "",
               "```",
               "New question type(s) in the table in this issue aren't handled by solver.py. "
               "Add a solver for each, confirm `python answer.py --check practice_keys.csv` still scores 1200/1200 "
-              "(download practice_keys.csv from FaisalXL/dso429-hourly-quiz), "
-              f"delete {files}, and push to main so the workflow re-answers them.",
+              "(download practice_keys.csv from FaisalXL/dso429-hourly-quiz), and push to main. "
+              "The workflow re-answers rounds still within 3 hours of release on its own.",
               "```"]
     ALERT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
