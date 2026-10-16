@@ -38,7 +38,7 @@ jobs:
           python answer.py --test-llm /tmp/practice_keys.csv > /tmp/gemini_test.txt 2>&1
           status=$?
           # Annotations are visible without signing in to GitHub.
-          while IFS= read -r line; do echo "::notice title=gemini test::$line"; done < /tmp/gemini_test.txt
+          while IFS= read -r line; do echo "::notice title=gemini test::$line"; done < <(grep -E "^(r[0-9]|gemini [0-9])" /tmp/gemini_test.txt; echo "503 retries: $(grep -c "HTTP 503" /tmp/gemini_test.txt)")
           exit $status
 
       - name: Answer new rounds
