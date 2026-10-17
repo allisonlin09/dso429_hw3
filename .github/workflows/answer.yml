@@ -1,9 +1,11 @@
 name: Answer quiz rounds
 
+# One run polls every 3 minutes for ~5.3 hours (loop.sh), then starts the
+# next run itself. GitHub's cron only fired every 2-4 hours here, so it is
+# just a backup that restarts the chain if it ever breaks; the concurrency
+# group keeps at most one loop running.
 on:
   schedule:
-    # GitHub cron is best-effort and can lag by several minutes; running
-    # every 15 minutes keeps us well inside the 3-hour full-credit window.
     - cron: "5,20,35,50 * * * *"
   workflow_dispatch:
   push:
@@ -12,6 +14,7 @@ on:
 permissions:
   contents: write
   issues: write
+  actions: write  # to start the next run
 
 concurrency:
   group: answer
@@ -20,6 +23,7 @@ concurrency:
 jobs:
   answer:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -41,43 +45,22 @@ jobs:
           while IFS= read -r line; do echo "::notice title=gemini test::$line"; done < <(grep -E "^(r[0-9]|gemini [0-9])" /tmp/gemini_test.txt; echo "503 retries: $(grep -c "HTTP 503" /tmp/gemini_test.txt)")
           exit $status
 
-      - name: Answer new rounds
-        id: answer
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          set +e
-          python answer.py
-          echo "status=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898733+github-actions[bot]@users.noreply.github.com"
-          git add answers; for f in unsolved.log llm_answers.json; do [ -f "$f" ] && git add "$f"; done || true
-          if git diff --cached --quiet; then
-            echo "No new rounds."
-          else
-            git commit -m "Answer rounds $(git diff --cached --name-only answers | sed -E 's/.*round-0*([0-9]+).*/\1/' | paste -sd, -)"
-            git pull --rebase
-            git push
-          fi
-
       - name: Write a sample alert (test only)
         if: contains(github.event.head_commit.message, '[test-alert]')
         run: |
           python -c "import answer; answer.write_alert([{'round_id':'49','q_index':'7','released_at':'2026-10-17T21:00:00Z','question_text':'TEST ALERT - sample question the solver cannot answer','option_a':'1','option_b':'2','option_c':'3','option_d':'4'}])"
           echo "TITLE_PREFIX=[TEST] " >> "$GITHUB_ENV"
 
-      - name: Open a GitHub issue (phone notification)
-        if: always() && hashFiles('alert.md') != ''
+      - name: Answer rounds every 3 minutes
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          LOOP_MINUTES: "320"
+          INTERVAL: "180"
+        run: bash loop.sh
+
+      - name: Start the next run
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue create --title "${TITLE_PREFIX}New question type found - see status inside" --body-file alert.md
-
-      - name: Fail if any question was unsolved
-        if: steps.answer.outputs.status != '0'
-        run: |
-          cat unsolved.log
-          exit 1
+        run: gh workflow run answer.yml --ref main
